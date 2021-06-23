@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	loglevel  = "DEBUG"
-	logFormat = "%{time:2006-01-02T15:04:05.000} %{module}::%{shortfunc} [%{shortfile}] > %{level:.5s} - %{message}"
+	loglevel             = "DEBUG"
+	logFormat            = "%{time:2006-01-02T15:04:05.000} %{module}::%{shortfunc} [%{shortfile}] > %{level:.5s} - %{message}"
+	maxClientConcurrency = 64
 )
 
 var targetRegex = regexp.MustCompile(`^([^@]+)@([^/:]+):([0-9]+)/(.+)$`)
@@ -19,6 +20,7 @@ var targetRegex = regexp.MustCompile(`^([^@]+)@([^/:]+):([0-9]+)/(.+)$`)
 func main() {
 	var privateKey string
 	flag.StringVar(&privateKey, "identity", "", "private key file")
+	concurrency := flag.Int("concurrency", 50, "sftp client concurrency")
 	flag.Parse()
 	tail := flag.Args()
 	if len(tail) < 2 {
@@ -61,7 +63,7 @@ func main() {
 	logger, lf := CreateLogger("sftp", "", nil, loglevel, logFormat)
 	defer lf.Close()
 
-	sftp, err := xsftp.NewSFTP([]string{privateKey}, "", "", logger)
+	sftp, err := xsftp.NewSFTP([]string{privateKey}, "", "", concurrency, maxClientConcurrency, logger)
 	if err != nil {
 		fmt.Printf("cannot initialize sftp: %v\n", err)
 		os.Exit(1)

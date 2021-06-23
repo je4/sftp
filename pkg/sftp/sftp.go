@@ -1,4 +1,4 @@
-package tbbs
+package sftp
 
 import (
 	"fmt"
@@ -15,12 +15,14 @@ import (
 )
 
 type SFTP struct {
-	config *ssh.ClientConfig
-	log    *logging.Logger
-	pool   *xssh.SSHConnectionPool
+	config               *ssh.ClientConfig
+	log                  *logging.Logger
+	pool                 *xssh.ConnectionPool
+	concurrency          int
+	maxClientConcurrency int
 }
 
-func NewSFTP(PrivateKey []string, Password, KnownHosts string, log *logging.Logger) (*SFTP, error) {
+func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxClientConcurrency int, log *logging.Logger) (*SFTP, error) {
 	var signer []ssh.Signer
 
 	sftp := &SFTP{
@@ -29,7 +31,9 @@ func NewSFTP(PrivateKey []string, Password, KnownHosts string, log *logging.Logg
 			Auth:            []ssh.AuthMethod{},
 			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		},
-		pool: xssh.NewSSHConnectionPool(log),
+		pool:                 xssh.NewSSHConnectionPool(log),
+		concurrency:          concurrency,
+		maxClientConcurrency: maxClientConcurrency,
 	}
 
 	for _, pk := range PrivateKey {
@@ -60,8 +64,8 @@ func NewSFTP(PrivateKey []string, Password, KnownHosts string, log *logging.Logg
 	return sftp, nil
 }
 
-func (s *SFTP) GetConnection(address, user string) (*xssh.SSHConnection, error) {
-	return s.pool.GetConnection(address, user, s.config)
+func (s *SFTP) GetConnection(address, user string) (*xssh.Connection, error) {
+	return s.pool.GetConnection(address, user, s.config, s.concurrency, s.maxClientConcurrency)
 }
 
 func (s *SFTP) Get(uri *url.URL, w io.Writer) (int64, error) {
@@ -107,7 +111,7 @@ func (s *SFTP) Put(uri *url.URL, r io.Reader) (int64, error) {
 		return 0, fmt.Errorf("invalid uri scheme %s for sftp", uri.Scheme)
 	}
 	userInfo := uri.User
-	conn, err := s.GetConnection(uri.Host, userInfo.Username())
+	conn, err := s.GetConnection(uri.Host, userInfo.Username(), 0, 0)
 	if err != nil {
 		return 0, emperror.Wrapf(err, "unable to connect to %v with user %v", uri.Host, userInfo.Username())
 	}

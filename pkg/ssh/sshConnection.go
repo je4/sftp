@@ -1,4 +1,4 @@
-package tbbs
+package ssh
 
 import (
 	"github.com/goph/emperror"
@@ -8,14 +8,17 @@ import (
 	"io"
 )
 
-type SSHConnection struct {
-	client  *ssh.Client
-	config  *ssh.ClientConfig
-	address string
-	log     *logging.Logger
+type Connection struct {
+	client               *ssh.Client
+	config               *ssh.ClientConfig
+	address              string
+	log                  *logging.Logger
+	concurrency          int
+	maxClientConcurrency int
+	maxPacketSize        int
 }
 
-func NewSSHConnection(address, user string, config *ssh.ClientConfig, log *logging.Logger) (*SSHConnection, error) {
+func NewSSHConnection(address, user string, config *ssh.ClientConfig, concurrency, maxClientConcurrency, maxPacketSize int, log *logging.Logger) (*Connection, error) {
 	// create copy of config with user
 	newConfig := &ssh.ClientConfig{
 		Config:            config.Config,
@@ -28,11 +31,14 @@ func NewSSHConnection(address, user string, config *ssh.ClientConfig, log *loggi
 		Timeout:           config.Timeout,
 	}
 
-	sc := &SSHConnection{
-		client:  nil,
-		log:     log,
-		config:  newConfig,
-		address: address,
+	sc := &Connection{
+		client:               nil,
+		log:                  log,
+		config:               newConfig,
+		address:              address,
+		concurrency:          concurrency,
+		maxClientConcurrency: maxClientConcurrency,
+		maxPacketSize:        maxPacketSize,
 	}
 	// connect
 	if err := sc.Connect(); err != nil {
@@ -41,7 +47,7 @@ func NewSSHConnection(address, user string, config *ssh.ClientConfig, log *loggi
 	return sc, nil
 }
 
-func (sc *SSHConnection) Connect() error {
+func (sc *Connection) Connect() error {
 	var err error
 	sc.client, err = ssh.Dial("tcp", sc.address, sc.config)
 	if err != nil {
@@ -51,12 +57,12 @@ func (sc *SSHConnection) Connect() error {
 	return nil
 }
 
-func (sc *SSHConnection) Close() {
+func (sc *Connection) Close() {
 	sc.client.Close()
 }
 
-func (sc *SSHConnection) GetSFTPClient() (*sftp.Client, error) {
-	sftpclient, err := sftp.NewClient(sc.client, sftp.MaxPacket(256*1024), sftp.MaxConcurrentRequestsPerFile(64))
+func (sc *Connection) GetSFTPClient() (*sftp.Client, error) {
+	sftpclient, err := sftp.NewClient(sc.client, sftp.MaxPacket(sc.maxPacketSize), sftp.MaxConcurrentRequestsPerFile(sc.maxClientConcurrency))
 	if err != nil {
 		sc.log.Infof("cannot get sftp subsystem - reconnecting to %s@%s", sc.client.User(), sc.address)
 		if err := sc.Connect(); err != nil {
@@ -70,7 +76,7 @@ func (sc *SSHConnection) GetSFTPClient() (*sftp.Client, error) {
 	return sftpclient, nil
 }
 
-func (sc *SSHConnection) ReadFile(path string, w io.Writer) (int64, error) {
+func (sc *Connection) ReadFile(path string, w io.Writer) (int64, error) {
 	sftpclient, err := sc.GetSFTPClient()
 	if err != nil {
 		return 0, emperror.Wrap(err, "unable to create SFTP session")
@@ -100,14 +106,14 @@ func (sc *SSHConnection) ReadFile(path string, w io.Writer) (int64, error) {
 			fmt.Println("\rdownload is completed\n")
 		}()
 	*/
-	written, err := io.Copy(w, r)
+	written, err := r.WriteTo(w) // io.Copy(w, r)
 	if err != nil {
 		return 0, emperror.Wrap(err, "cannot copy data")
 	}
 	return written, nil
 }
 
-func (sc *SSHConnection) WriteFile(path string, r io.Reader) (int64, error) {
+func (sc *Connection) WriteFile(path string, r io.Reader) (int64, error) {
 	sftpclient, err := sc.GetSFTPClient()
 	if err != nil {
 		return 0, emperror.Wrap(err, "unable to create SFTP session")
@@ -119,7 +125,7 @@ func (sc *SSHConnection) WriteFile(path string, r io.Reader) (int64, error) {
 		return 0, emperror.Wrapf(err, "cannot create remote file %s", path)
 	}
 
-	written, err := w.ReadFromWithConcurrency(r, 50) // io.Copy(w, r)
+	written, err := w.ReadFromWithConcurrency(r, sc.concurrency) // io.Copy(w, r)
 	if err != nil {
 		return 0, emperror.Wrap(err, "cannot copy data")
 	}

@@ -1,4 +1,4 @@
-package tbbs
+package ssh
 
 import (
 	"fmt"
@@ -9,22 +9,22 @@ import (
 	"sync"
 )
 
-type SSHConnectionPool struct {
+type ConnectionPool struct {
 	// Protects access to fields below
 	mu    sync.Mutex
-	table map[string]*SSHConnection
+	table map[string]*Connection
 	log   *logging.Logger
 }
 
-func NewSSHConnectionPool(log *logging.Logger) *SSHConnectionPool {
-	return &SSHConnectionPool{
+func NewSSHConnectionPool(log *logging.Logger) *ConnectionPool {
+	return &ConnectionPool{
 		mu:    sync.Mutex{},
-		table: map[string]*SSHConnection{},
+		table: map[string]*Connection{},
 		log:   log,
 	}
 }
 
-func (cp *SSHConnectionPool) GetConnection(address, user string, config *ssh.ClientConfig) (*SSHConnection, error) {
+func (cp *ConnectionPool) GetConnection(address, user string, config *ssh.ClientConfig, concurrency, maxClientConcurrency int) (*Connection, error) {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
 
@@ -36,7 +36,7 @@ func (cp *SSHConnectionPool) GetConnection(address, user string, config *ssh.Cli
 	}
 	var err error
 	cp.log.Infof("new ssh connection to %v", id)
-	conn, err = NewSSHConnection(address, user, config, cp.log)
+	conn, err = NewSSHConnection(address, user, config, concurrency, maxClientConcurrency, cp.log)
 	if err != nil {
 		return nil, emperror.Wrapf(err, "cannot open ssh connection")
 	}
