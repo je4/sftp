@@ -56,7 +56,7 @@ func (sc *SSHConnection) Close() {
 }
 
 func (sc *SSHConnection) GetSFTPClient() (*sftp.Client, error) {
-	sftpclient, err := sftp.NewClient(sc.client)
+	sftpclient, err := sftp.NewClient(sc.client, sftp.MaxPacket(256*1024), sftp.MaxConcurrentRequestsPerFile(64))
 	if err != nil {
 		sc.log.Infof("cannot get sftp subsystem - reconnecting to %s@%s", sc.client.User(), sc.address)
 		if err := sc.Connect(); err != nil {
@@ -118,7 +118,8 @@ func (sc *SSHConnection) WriteFile(path string, r io.Reader) (int64, error) {
 	if err != nil {
 		return 0, emperror.Wrapf(err, "cannot create remote file %s", path)
 	}
-	written, err := io.Copy(w, r)
+
+	written, err := w.ReadFromWithConcurrency(r, 50) // io.Copy(w, r)
 	if err != nil {
 		return 0, emperror.Wrap(err, "cannot copy data")
 	}
