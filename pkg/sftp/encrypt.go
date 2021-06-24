@@ -3,6 +3,7 @@ package sftp
 import (
 	"crypto/cipher"
 	"github.com/blend/go-sdk/crypto"
+	logger "github.com/op/go-logging"
 	"github.com/tidwall/transform"
 	"hash"
 	"io"
@@ -13,19 +14,22 @@ type Encrypt struct {
 	block  cipher.Block
 	mac    hash.Hash
 	iv     []byte
+	logger *logger.Logger
 }
 
-func NewEncrypt(block cipher.Block, stream cipher.Stream, mac hash.Hash, iv []byte) *Encrypt {
+func NewEncrypt(block cipher.Block, stream cipher.Stream, mac hash.Hash, iv []byte, logger *logger.Logger) *Encrypt {
 	enc := &Encrypt{
 		block:  block,
 		stream: stream,
 		mac:    mac,
 		iv:     iv,
+		logger: logger,
 	}
 	return enc
 }
 
 func (e *Encrypt) StartReader(reader io.Reader) io.Reader {
+	//tr := io.TeeReader(reader, reader)
 	enc := &crypto.StreamEncrypter{
 		Source: reader,
 		Block:  e.block,

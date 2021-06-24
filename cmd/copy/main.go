@@ -103,7 +103,7 @@ func main() {
 		[]string{privateKey}, "", "",
 		*concurrency, maxClientConcurrency, *maxPacketSize,
 		logger,
-		xsftp.NewEncrypt(block, stream, mac, iv),
+		xsftp.NewEncrypt(block, stream, mac, iv, logger),
 		xsftp.NewProgress(
 			fi.Size(),
 			time.Second,
