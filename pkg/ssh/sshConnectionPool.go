@@ -16,7 +16,7 @@ type ConnectionPool struct {
 	log   *logging.Logger
 }
 
-func NewSSHConnectionPool(log *logging.Logger) *ConnectionPool {
+func NewConnectionPool(log *logging.Logger) *ConnectionPool {
 	return &ConnectionPool{
 		mu:    sync.Mutex{},
 		table: map[string]*Connection{},
@@ -24,7 +24,7 @@ func NewSSHConnectionPool(log *logging.Logger) *ConnectionPool {
 	}
 }
 
-func (cp *ConnectionPool) GetConnection(address, user string, config *ssh.ClientConfig, concurrency, maxClientConcurrency int) (*Connection, error) {
+func (cp *ConnectionPool) GetConnection(address, user string, config *ssh.ClientConfig, concurrency, maxClientConcurrency, maxPackedSize int) (*Connection, error) {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
 
@@ -36,7 +36,7 @@ func (cp *ConnectionPool) GetConnection(address, user string, config *ssh.Client
 	}
 	var err error
 	cp.log.Infof("new ssh connection to %v", id)
-	conn, err = NewSSHConnection(address, user, config, concurrency, maxClientConcurrency, cp.log)
+	conn, err = NewConnection(address, user, config, concurrency, maxClientConcurrency, maxPackedSize, cp.log)
 	if err != nil {
 		return nil, emperror.Wrapf(err, "cannot open ssh connection")
 	}

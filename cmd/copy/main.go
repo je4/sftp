@@ -1,12 +1,22 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/sha512"
 	"flag"
 	"fmt"
+	"github.com/blend/go-sdk/crypto"
+	"github.com/gosuri/uiprogress"
 	xsftp "github.com/je4/sftp/v2/pkg/sftp"
+	"math"
 	"net/url"
 	"os"
 	"regexp"
+	"time"
 )
 
 const (
@@ -21,6 +31,7 @@ func main() {
 	var privateKey string
 	flag.StringVar(&privateKey, "identity", "", "private key file")
 	concurrency := flag.Int("concurrency", 50, "sftp client concurrency")
+	maxPacketSize := flag.Int("maxpacketsize", 512*1024, "max packet size for sftp upload")
 	flag.Parse()
 	tail := flag.Args()
 	if len(tail) < 2 {
@@ -63,7 +74,44 @@ func main() {
 	logger, lf := CreateLogger("sftp", "", nil, loglevel, logFormat)
 	defer lf.Close()
 
-	sftp, err := xsftp.NewSFTP([]string{privateKey}, "", "", concurrency, maxClientConcurrency, logger)
+	/* Progress Bar */
+	uiprogress.Start()
+	bar := uiprogress.AddBar(100)
+	bar.AppendCompleted()
+	bar.PrependElapsed()
+
+	/* Encryption */
+	key, err := crypto.CreateKey(crypto.DefaultKeySize)
+	if err != nil {
+		logger.Panicf("cannot generate crypto key: %v", err)
+	}
+	iv := make([]byte, aes.BlockSize)
+	if _, err = rand.Read(iv); err != nil {
+		logger.Panicf("cannot create random iv: %v", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		logger.Panicf("cannot create cipher block: %v", err)
+	}
+	stream := cipher.NewCTR(block, iv)
+	mac := hmac.New(sha256.New, key)
+
+	/* Checksum */
+	hash := sha512.New()
+
+	sftp, err := xsftp.NewSFTP(
+		[]string{privateKey}, "", "",
+		*concurrency, maxClientConcurrency, *maxPacketSize,
+		logger,
+		xsftp.NewEncrypt(block, stream, mac, iv),
+		xsftp.NewProgress(
+			fi.Size(),
+			time.Second,
+			func(remaining time.Duration, percent float64, estimated time.Time, complete bool) {
+				bar.Set(int(math.Round(percent) + 1))
+			}),
+		xsftp.NewChecksum(hash, logger),
+	)
 	if err != nil {
 		fmt.Printf("cannot initialize sftp: %v\n", err)
 		os.Exit(1)
@@ -83,5 +131,6 @@ func main() {
 		fmt.Printf("cannot upload %s -> %s: %v\n", src, targetUrl.String(), err)
 		os.Exit(1)
 	}
-	fmt.Printf("len: %v\n", len)
+	fmt.Printf("len: %v // checksum: %x\n", len, hash.Sum(nil))
+	fmt.Printf("decrypt using openssl: \n openssl enc -aes-256-ctr -nosalt -d -in %s -out %s -K '%x' -iv '%x'\n", "encrypted.aes256", "plain.dat", key, iv)
 }

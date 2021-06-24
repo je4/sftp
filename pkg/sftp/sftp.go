@@ -20,9 +20,11 @@ type SFTP struct {
 	pool                 *xssh.ConnectionPool
 	concurrency          int
 	maxClientConcurrency int
+	maxPacketSize        int
+	queue                []TransferQueueEntry
 }
 
-func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxClientConcurrency int, log *logging.Logger) (*SFTP, error) {
+func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxClientConcurrency, maxPacketSize int, log *logging.Logger, queue ...TransferQueueEntry) (*SFTP, error) {
 	var signer []ssh.Signer
 
 	sftp := &SFTP{
@@ -31,9 +33,11 @@ func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxC
 			Auth:            []ssh.AuthMethod{},
 			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		},
-		pool:                 xssh.NewSSHConnectionPool(log),
+		pool:                 xssh.NewConnectionPool(log),
 		concurrency:          concurrency,
 		maxClientConcurrency: maxClientConcurrency,
+		maxPacketSize:        maxPacketSize,
+		queue:                queue,
 	}
 
 	for _, pk := range PrivateKey {
@@ -65,7 +69,7 @@ func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxC
 }
 
 func (s *SFTP) GetConnection(address, user string) (*xssh.Connection, error) {
-	return s.pool.GetConnection(address, user, s.config, s.concurrency, s.maxClientConcurrency)
+	return s.pool.GetConnection(address, user, s.config, s.concurrency, s.maxClientConcurrency, s.maxPacketSize)
 }
 
 func (s *SFTP) Get(uri *url.URL, w io.Writer) (int64, error) {
@@ -111,12 +115,16 @@ func (s *SFTP) Put(uri *url.URL, r io.Reader) (int64, error) {
 		return 0, fmt.Errorf("invalid uri scheme %s for sftp", uri.Scheme)
 	}
 	userInfo := uri.User
-	conn, err := s.GetConnection(uri.Host, userInfo.Username(), 0, 0)
+	conn, err := s.GetConnection(uri.Host, userInfo.Username())
 	if err != nil {
 		return 0, emperror.Wrapf(err, "unable to connect to %v with user %v", uri.Host, userInfo.Username())
 	}
+	daReader := r
+	for _, queueEntry := range s.queue {
+		daReader = queueEntry.StartReader(daReader)
+	}
 	start := time.Now()
-	written, err := conn.WriteFile(uri.Path, r)
+	written, err := conn.WriteFile(uri.Path, daReader)
 	if err != nil {
 		return written, err
 	}

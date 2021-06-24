@@ -18,7 +18,7 @@ type Connection struct {
 	maxPacketSize        int
 }
 
-func NewSSHConnection(address, user string, config *ssh.ClientConfig, concurrency, maxClientConcurrency, maxPacketSize int, log *logging.Logger) (*Connection, error) {
+func NewConnection(address, user string, config *ssh.ClientConfig, concurrency, maxClientConcurrency, maxPacketSize int, log *logging.Logger) (*Connection, error) {
 	// create copy of config with user
 	newConfig := &ssh.ClientConfig{
 		Config:            config.Config,
@@ -89,23 +89,6 @@ func (sc *Connection) ReadFile(path string, w io.Writer) (int64, error) {
 	}
 	defer r.Close()
 
-	/*
-		stat, err := r.Stat()
-		if err != nil {
-			return 0, emperror.Wrapf(err, "cannot stat %s", path)
-		}
-		Size := stat.Size()
-		r2 := progress.NewReader(r)
-		// Start a goroutine printing progress
-		go func() {
-			ctx := context.Background()
-			progressChan := progress.NewTicker(ctx, r2, Size, 1*time.Second)
-			for p := range progressChan {
-				fmt.Printf("\r%v remaining...", p.Remaining().Round(time.Second))
-			}
-			fmt.Println("\rdownload is completed\n")
-		}()
-	*/
 	written, err := r.WriteTo(w) // io.Copy(w, r)
 	if err != nil {
 		return 0, emperror.Wrap(err, "cannot copy data")
