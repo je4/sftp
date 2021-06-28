@@ -5,6 +5,7 @@ import (
 	"github.com/goph/emperror"
 	"github.com/op/go-logging"
 	"golang.org/x/crypto/ssh"
+	"net/url"
 	"strings"
 	"sync"
 )
@@ -24,19 +25,25 @@ func NewConnectionPool(log *logging.Logger) *ConnectionPool {
 	}
 }
 
-func (cp *ConnectionPool) GetConnection(address, user string, config *ssh.ClientConfig, concurrency, maxClientConcurrency, maxPackedSize int) (*Connection, error) {
+func (cp *ConnectionPool) GetConnection(address *url.URL, config *ssh.ClientConfig) (*Connection, error) {
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
 
-	id := strings.ToLower(fmt.Sprintf("%s@%s", user, address))
+	id := strings.ToLower(fmt.Sprintf("%s@%s", address.User.Username(), address.Host))
 
 	conn, ok := cp.table[id]
 	if ok {
 		return conn, nil
 	}
 	var err error
-	cp.log.Infof("new ssh connection to %v", id)
-	conn, err = NewConnection(address, user, config, concurrency, maxClientConcurrency, maxPackedSize, cp.log)
+	switch strings.ToLower(address.Scheme) {
+	case "ssh":
+	case "sftp":
+		cp.log.Infof("new %s connection to %v", address.Scheme, id)
+		conn, err = NewConnection(address, config, cp.log)
+	default:
+		return nil, emperror.Wrapf(err, "invalid scheme %s in %s", address.Scheme, address.String())
+	}
 	if err != nil {
 		return nil, emperror.Wrapf(err, "cannot open ssh connection")
 	}

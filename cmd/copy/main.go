@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"github.com/blend/go-sdk/crypto"
 	"github.com/gosuri/uiprogress"
-	xsftp "github.com/je4/sftp/v2/pkg/sftp"
+	"github.com/je4/sftp/v2/pkg/ssh"
+	"github.com/je4/sftp/v2/pkg/stream"
+	"golang.org/x/crypto/sha3"
 	"math"
 	"net/url"
 	"os"
@@ -74,7 +76,7 @@ func main() {
 	logger, lf := CreateLogger("sftp", "", nil, loglevel, logFormat)
 	defer lf.Close()
 
-	/* Progress Bar */
+	/* ProgressReader Bar */
 	uiprogress.Start()
 	bar := uiprogress.AddBar(100)
 	bar.AppendCompleted()
@@ -93,24 +95,34 @@ func main() {
 	if err != nil {
 		logger.Panicf("cannot create cipher block: %v", err)
 	}
-	stream := cipher.NewCTR(block, iv)
+	ctrStream := cipher.NewCTR(block, iv)
 	mac := hmac.New(sha256.New, key)
 
-	/* Checksum */
-	hash := sha512.New()
+	/* ChecksumReaderWriter */
+	hashSha512 := sha512.New()
+	hashSha256 := sha256.New()
+	hashSha3_224 := sha3.New224()
+	hashSha3_384 := sha3.New384()
 
-	sftp, err := xsftp.NewSFTP(
-		[]string{privateKey}, "", "",
-		*concurrency, maxClientConcurrency, *maxPacketSize,
-		logger,
-		xsftp.NewEncrypt(block, stream, mac, iv, logger),
-		xsftp.NewProgress(
+	rsc, err := stream.NewReadStreamQueue(
+		stream.NewEncryptReader(block, ctrStream, mac, iv, logger),
+		stream.NewProgressReaderWriter(
 			fi.Size(),
 			time.Second,
 			func(remaining time.Duration, percent float64, estimated time.Time, complete bool) {
 				bar.Set(int(math.Round(percent) + 1))
 			}),
-		xsftp.NewChecksum(hash, logger),
+		stream.NewChecksumReaderWriter(hashSha512, logger),
+		stream.NewChecksumReaderWriter(hashSha256, logger),
+		stream.NewChecksumReaderWriter(hashSha3_224, logger),
+		stream.NewChecksumReaderWriter(hashSha3_384, logger),
+	)
+
+	sftp, err := ssh.NewSFTP(
+		[]string{privateKey}, "", "",
+		*concurrency, maxClientConcurrency, *maxPacketSize,
+		rsc,
+		logger,
 	)
 	if err != nil {
 		fmt.Printf("cannot initialize sftp: %v\n", err)
@@ -126,11 +138,15 @@ func main() {
 	//	shaSink := sha512.New()
 	//	dest := io.MultiWriter(w, shaSink)
 
-	len, err := sftp.PutFile(targetUrl, src)
+	_, err = sftp.PutFile(targetUrl, src)
 	if err != nil {
 		fmt.Printf("cannot upload %s -> %s: %v\n", src, targetUrl.String(), err)
 		os.Exit(1)
 	}
-	fmt.Printf("len: %v // checksum: %x\n", len, hash.Sum(nil))
+	fmt.Printf("sha512: %x\n", hashSha512.Sum(nil))
+	fmt.Printf("sha256: %x\n", hashSha256.Sum(nil))
+	fmt.Printf("sha3_224: %x\n", hashSha3_224.Sum(nil))
+	fmt.Printf("sha3_384: %x\n", hashSha3_384.Sum(nil))
 	fmt.Printf("decrypt using openssl: \n openssl enc -aes-256-ctr -nosalt -d -in %s -out %s -K '%x' -iv '%x'\n", "encrypted.aes256", "plain.dat", key, iv)
+	fmt.Printf("target: %s\n", targetUrl.String())
 }

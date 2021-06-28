@@ -1,9 +1,8 @@
-package sftp
+package ssh
 
 import (
-	"fmt"
 	"github.com/goph/emperror"
-	xssh "github.com/je4/sftp/v2/pkg/ssh"
+	"github.com/je4/sftp/v2/pkg/stream"
 	"github.com/op/go-logging"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -17,15 +16,20 @@ import (
 type SFTP struct {
 	config               *ssh.ClientConfig
 	log                  *logging.Logger
-	pool                 *xssh.ConnectionPool
+	pool                 *ConnectionPool
 	concurrency          int
 	maxClientConcurrency int
 	maxPacketSize        int
-	queue                []TransferQueueEntry
+	rsc                  *stream.ReadStreamQueue
 }
 
-func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxClientConcurrency, maxPacketSize int, log *logging.Logger, queue ...TransferQueueEntry) (*SFTP, error) {
+func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxClientConcurrency, maxPacketSize int, rsc *stream.ReadStreamQueue, log *logging.Logger) (*SFTP, error) {
 	var signer []ssh.Signer
+
+	readStreamQueue, err := stream.NewReadStreamQueue(rsc)
+	if err != nil {
+		return nil, emperror.Wrap(err, "cannot create ReadStreamQueue")
+	}
 
 	sftp := &SFTP{
 		log: log,
@@ -33,11 +37,11 @@ func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxC
 			Auth:            []ssh.AuthMethod{},
 			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		},
-		pool:                 xssh.NewConnectionPool(log),
+		pool:                 NewConnectionPool(log),
 		concurrency:          concurrency,
 		maxClientConcurrency: maxClientConcurrency,
 		maxPacketSize:        maxPacketSize,
-		queue:                queue,
+		rsc:                  readStreamQueue,
 	}
 
 	for _, pk := range PrivateKey {
@@ -68,24 +72,20 @@ func NewSFTP(PrivateKey []string, Password, KnownHosts string, concurrency, maxC
 	return sftp, nil
 }
 
-func (s *SFTP) GetConnection(address, user string) (*xssh.Connection, error) {
-	return s.pool.GetConnection(address, user, s.config, s.concurrency, s.maxClientConcurrency, s.maxPacketSize)
+func (s *SFTP) GetConnection(address *url.URL) (*Connection, error) {
+	return s.pool.GetConnection(address, s.config)
 }
 
 func (s *SFTP) Get(uri *url.URL, w io.Writer) (int64, error) {
-	if uri.Scheme != "sftp" {
-		return 0, fmt.Errorf("invalid uri scheme %s for sftp", uri.Scheme)
-	}
-	user := ""
-	if uri.User != nil {
-		user = uri.User.Username()
-	}
-	conn, err := s.GetConnection(uri.Host, user)
+	conn, err := s.GetConnection(uri)
 	if err != nil {
-		return 0, emperror.Wrapf(err, "unable to connect to %v with user %v", uri.Host, user)
+		return 0, emperror.Wrapf(err, "unable to connect to %v with user %v", uri.String(), uri.User.Username())
 	}
-
-	written, err := conn.ReadFile(uri.Path, w)
+	sConn, err := NewSFTPConnection(conn, s.concurrency, s.maxClientConcurrency, s.maxPacketSize)
+	if err != nil {
+		return 0, emperror.Wrapf(err, "unable to create sftp connection for %s", uri.String())
+	}
+	written, err := sConn.ReadFile(uri.Path, w)
 	if err != nil {
 		return 0, emperror.Wrapf(err, "cannot read data from %v", uri.Path)
 	}
@@ -111,20 +111,17 @@ func (s *SFTP) PutFile(uri *url.URL, source string) (int64, error) {
 }
 
 func (s *SFTP) Put(uri *url.URL, r io.Reader) (int64, error) {
-	if uri.Scheme != "sftp" {
-		return 0, fmt.Errorf("invalid uri scheme %s for sftp", uri.Scheme)
-	}
-	userInfo := uri.User
-	conn, err := s.GetConnection(uri.Host, userInfo.Username())
+	conn, err := s.GetConnection(uri)
 	if err != nil {
-		return 0, emperror.Wrapf(err, "unable to connect to %v with user %v", uri.Host, userInfo.Username())
+		return 0, emperror.Wrapf(err, "unable to connect to %v with user %v", uri.String(), uri.User.Username())
 	}
-	daReader := r
-	for _, queueEntry := range s.queue {
-		daReader = queueEntry.StartReader(daReader)
+	sConn, err := NewSFTPConnection(conn, s.concurrency, s.maxClientConcurrency, s.maxPacketSize)
+	if err != nil {
+		return 0, emperror.Wrapf(err, "unable to create sftp connection for %s", uri.String())
 	}
+	daReader := s.rsc.StartReader(r)
 	start := time.Now()
-	written, err := conn.WriteFile(uri.Path, daReader)
+	written, err := sConn.WriteFile(uri.Path, daReader)
 	if err != nil {
 		return written, err
 	}

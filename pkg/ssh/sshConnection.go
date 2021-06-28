@@ -3,26 +3,22 @@ package ssh
 import (
 	"github.com/goph/emperror"
 	"github.com/op/go-logging"
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
-	"io"
+	"net/url"
 )
 
 type Connection struct {
-	client               *ssh.Client
-	config               *ssh.ClientConfig
-	address              string
-	log                  *logging.Logger
-	concurrency          int
-	maxClientConcurrency int
-	maxPacketSize        int
+	Client  *ssh.Client
+	config  *ssh.ClientConfig
+	Address *url.URL
+	Log     *logging.Logger
 }
 
-func NewConnection(address, user string, config *ssh.ClientConfig, concurrency, maxClientConcurrency, maxPacketSize int, log *logging.Logger) (*Connection, error) {
+func NewConnection(address *url.URL, config *ssh.ClientConfig, log *logging.Logger) (*Connection, error) {
 	// create copy of config with user
 	newConfig := &ssh.ClientConfig{
 		Config:            config.Config,
-		User:              user,
+		User:              address.User.Username(),
 		Auth:              config.Auth,
 		HostKeyCallback:   config.HostKeyCallback,
 		BannerCallback:    config.BannerCallback,
@@ -32,35 +28,33 @@ func NewConnection(address, user string, config *ssh.ClientConfig, concurrency, 
 	}
 
 	sc := &Connection{
-		client:               nil,
-		log:                  log,
-		config:               newConfig,
-		address:              address,
-		concurrency:          concurrency,
-		maxClientConcurrency: maxClientConcurrency,
-		maxPacketSize:        maxPacketSize,
+		Client:  nil,
+		Log:     log,
+		config:  newConfig,
+		Address: address,
 	}
 	// connect
 	if err := sc.Connect(); err != nil {
-		return nil, emperror.Wrapf(err, "cannot connect to %s@%s", user, address)
+		return nil, emperror.Wrapf(err, "cannot connect to %s", address.String())
 	}
 	return sc, nil
 }
 
 func (sc *Connection) Connect() error {
 	var err error
-	sc.client, err = ssh.Dial("tcp", sc.address, sc.config)
+	sc.Client, err = ssh.Dial("tcp", sc.Address.Host, sc.config)
 	if err != nil {
-		return emperror.Wrapf(err, "unable to connect to %v", sc.address)
+		return emperror.Wrapf(err, "unable to connect to %v", sc.Address)
 	}
 
 	return nil
 }
 
 func (sc *Connection) Close() {
-	sc.client.Close()
+	sc.Client.Close()
 }
 
+/*
 func (sc *Connection) GetSFTPClient() (*sftp.Client, error) {
 	sftpclient, err := sftp.NewClient(sc.client, sftp.MaxPacket(sc.maxPacketSize), sftp.MaxConcurrentRequestsPerFile(sc.maxClientConcurrency))
 	if err != nil {
@@ -114,3 +108,4 @@ func (sc *Connection) WriteFile(path string, r io.Reader) (int64, error) {
 	}
 	return written, nil
 }
+*/
