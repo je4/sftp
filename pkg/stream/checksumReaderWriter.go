@@ -20,6 +20,7 @@ func NewChecksumReaderWriter(mac hash.Hash, logger *logger.Logger) *ChecksumRead
 }
 
 func (cr *ChecksumReaderWriter) StartReader(reader io.Reader) io.Reader {
+	cr.mac.Reset()
 	pr, pw := io.Pipe()
 	tr := io.TeeReader(reader, pw)
 	go func() {
