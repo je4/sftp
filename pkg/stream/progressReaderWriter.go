@@ -31,6 +31,9 @@ func (pr *ProgressReaderWriter) StartReader(reader io.Reader) io.Reader {
 		progressChan := progress.NewTicker(ctx, r2, pr.filesize, pr.interval)
 		for p := range progressChan {
 			pr.callback(p.Remaining(), p.Percent(), p.Estimated(), p.Complete())
+			if p.Complete() {
+				break
+			}
 		}
 	}()
 	return r2
