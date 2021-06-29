@@ -8,6 +8,9 @@ type ReadStreamQueue struct {
 
 func NewReadStreamQueue(entries ...ReadQueueEntry) (*ReadStreamQueue, error) {
 	rsq := &ReadStreamQueue{queue: entries}
+	if rsq.queue == nil {
+		rsq.queue = []ReadQueueEntry{}
+	}
 	return rsq, nil
 }
 
