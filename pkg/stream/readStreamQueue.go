@@ -14,8 +14,8 @@ func NewReadStreamQueue(entries ...ReadQueueEntry) (*ReadStreamQueue, error) {
 	return rsq, nil
 }
 
-func (rsq *ReadStreamQueue) Append(entry ReadQueueEntry) {
-	rsq.queue = append(rsq.queue, entry)
+func (rsq *ReadStreamQueue) Append(entry ...ReadQueueEntry) {
+	rsq.queue = append(rsq.queue, entry...)
 }
 
 func (rsq *ReadStreamQueue) StartReader(reader io.Reader) io.Reader {
